@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Speaking Practice</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Lexend:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="top"><h1 id="ttl">Speaking Practice</h1><div class="prog" id="prog" aria-label="Progress"></div></header>
+<main class="wrap" id="app"><p class="sub">Loading…</p></main>
+<script src="tasks.js"></script>
+<script src="pics.js"></script>
+<script>
+{
+const BANK = window.BANK;
+const BYID = Object.fromEntries(BANK.tasks.map(t=>[t.id,t]));
+const NAMES = {guide:"Guide",maya:"Maya",leo:"Leo"};
+const app = document.getElementById('app');
+const $ = s => app.querySelector(s);
+const esc = t => String(t).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const MIC = {id:'mic', who:'guide', text:BANK.common.mic};
+const INTRO = ['intro1','intro2','intro3'].map(id=>({id, who:'guide', text:BANK.common[id]}));
+
+/* ---------- assignment from the link ---------- */
+const q = new URLSearchParams(location.search);
+const flag = (k,d) => q.has(k) ? q.get(k)!=='0' : d;
+const CFG = {
+ ids: (q.get('t')||'').split(',').map(s=>s.trim()).filter(id=>BYID[id]).slice(0,12),
+ time: parseInt(q.get('tm')||'0',10)||0,
+ words: flag('w',true), retry: flag('r',true), caps: flag('c',true), stt: flag('x',true),
+ name: (q.get('n')||'').slice(0,80)
+};
+if(CFG.name) { document.getElementById('ttl').textContent = 'Speaking Practice · ' + CFG.name; document.title = CFG.name; }
+
+let steps=[], TASKS=[], idx=0, student={first:'',last:'',period:''}, captions=CFG.caps;
+const recs={};
+function setup(ids){
+ steps=[{type:'mic',key:'L0',time:20},{type:'welcome'},{type:'intro'}];
+ ids.forEach((id,i)=>{const t=BYID[id]; steps.push({type:'task',key:'L'+(i+1),n:i+1,t,time:CFG.time||t.time});});
+ steps.push({type:'finish'});
+ TASKS=steps.filter(s=>s.type==='mic'||s.type==='task');
+}
+
+function drawProg(){
+ const p=document.getElementById('prog');
+ p.innerHTML=TASKS.map(s=>`<i class="${recs[s.key]!==undefined?'on':''} ${steps[idx]===s?'now':''}" title="${s.type==='mic'?'Mic check':'Task '+s.n}"></i>`).join('');
+}
+
+/* ---------- audio playback ---------- */
+let segTimer=null;
+function playSeg(id,holder){
+ return new Promise(res=>{
+  clearInterval(segTimer); if(holder.a) holder.a.pause();
+  const sg=(BANK.seg&&BANK.seg[id])||[id,0,null];
+  const a=new Audio('audio/'+sg[0]+'.mp3'); holder.a=a;
+  let fin=false; const done=()=>{ if(fin) return; fin=true; clearInterval(segTimer); res(); };
+  a.onended=done; a.onerror=done;
+  const go=()=>{ try{ if(sg[1]) a.currentTime=sg[1]; }catch(e){}
+   a.play().then(()=>{ if(sg[2]!=null){ segTimer=setInterval(()=>{ if(holder.a!==a){ clearInterval(segTimer); return; } if(a.currentTime>=sg[2]){ a.pause(); done(); } },40); } }).catch(done); };
+  if(sg[1]){ if(a.readyState>=1) go(); else a.addEventListener('loadedmetadata',go,{once:true}); } else go();
+ });
+}
+const PH={a:null}; let playToken=0;
+function stopAudio(){playToken++;clearInterval(segTimer);if(PH.a)PH.a.pause();}
+function play(id){ return playSeg(id,PH); }
+async function playLines(lines,onLine){
+ const tok=++playToken;
+ for(let i=0;i<lines.length;i++){ if(tok!==playToken) return false; onLine(i); await play(lines[i].id); }
+ if(tok!==playToken) return false; onLine(lines.length); return true;
+}
+
+/* ---------- microphone ---------- */
+let stream=null, actx=null, micId='';
+async function getMic(){
+ if(stream && stream.getAudioTracks().some(t=>t.readyState==='live')) return stream;
+ if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia) throw new Error('nomic');
+ const audio={echoCancellation:true,noiseSuppression:true,autoGainControl:true};
+ if(micId) audio.deviceId={exact:micId};
+ stream=await navigator.mediaDevices.getUserMedia({audio});
+ return stream;
+}
+function closeMic(){ if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; } }
+function micLabel(){ const t=stream&&stream.getAudioTracks()[0]; return t?t.label:''; }
+async function listMics(){ try{ return (await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==='audioinput'); }catch(e){ return []; } }
+function ctx(){ if(!actx) actx=new (window.AudioContext||window.webkitAudioContext)(); return actx; }
+let meterStop=null, meterMax=0;
+async function liveMeter(barEl){
+ meterMax=0; if(meterStop) meterStop();
+ const s=await getMic(); const c=ctx(); if(c.state==='suspended') await c.resume();
+ const an=c.createAnalyser(); an.fftSize=512; const src=c.createMediaStreamSource(s); src.connect(an);
+ const buf=new Uint8Array(an.fftSize); let raf, on=true;
+ const loop=()=>{ if(!on) return; an.getByteTimeDomainData(buf); let m=0; for(const v of buf) m=Math.max(m,Math.abs(v-128)); meterMax=Math.max(meterMax,m); barEl.style.width=Math.min(100,m/70*100)+'%'; raf=requestAnimationFrame(loop); };
+ loop(); meterStop=()=>{ on=false; cancelAnimationFrame(raf); try{src.disconnect()}catch(e){} meterStop=null; };
+}
+
+/* ---------- live speech-to-text (Chrome's built-in recognizer) ---------- */
+const STT=window.SpeechRecognition||window.webkitSpeechRecognition;
+function startSTT(){
+ if(!STT||!CFG.stt) return {stop:async()=>null};
+ let finals=[], interim='', running=true, r=null, ended=null, failed=false;
+ const make=()=>{
+  try{
+   r=new STT(); r.lang='en-US'; r.continuous=true; r.interimResults=true; r.maxAlternatives=1;
+   r.onresult=e=>{ interim=''; for(let i=e.resultIndex;i<e.results.length;i++){ const x=e.results[i]; if(x.isFinal) finals.push(x[0].transcript.trim()); else interim+=x[0].transcript; } };
+   r.onerror=e=>{ if(['not-allowed','service-not-allowed','network','language-not-supported'].includes(e.error)){ running=false; failed=true; } };
+   r.onend=()=>{ if(running){ make(); } else if(ended){ ended(); } };
+   r.start();
+  }catch(e){ running=false; r=null; if(ended) ended(); }
+ };
+ make();
+ return {stop:()=>new Promise(res=>{
+  let once=false;
+  const fin=()=>{ if(once) return; once=true; const all=[...finals, interim.trim()].filter(Boolean).join(' ').replace(/\s+/g,' ').trim(); res(all||(r&&!failed)?all:null); };
+  ended=fin; running=false;
+  try{ r&&r.stop(); }catch(e){}
+  setTimeout(fin, 2500);
+ })};
+}
+
+/* ---------- recording ---------- */
+let rec=null;
+async function startRec(seconds,onTick,onLevel){
+ const s=await getMic(); const c=ctx(); if(c.state==='suspended') await c.resume();
+ const an=c.createAnalyser(); an.fftSize=512; const src=c.createMediaStreamSource(s); src.connect(an);
+ const buf=new Uint8Array(an.fftSize); const chunks=[];
+ const mr=new MediaRecorder(s); mr.ondataavailable=e=>e.data.size&&chunks.push(e.data);
+ const t0=performance.now(); let raf;
+ const loop=()=>{an.getByteTimeDomainData(buf);let m=0;for(const v of buf)m=Math.max(m,Math.abs(v-128));onLevel(Math.min(1,m/70));const el=(performance.now()-t0)/1000;onTick(el);if(el>=seconds){finish();return;}raf=requestAnimationFrame(loop)};
+ let done; const result=new Promise(r=>done=r);
+ function finish(){ if(mr.state==='inactive')return; cancelAnimationFrame(raf); mr.stop(); }
+ const sr=startSTT();
+ mr.onstop=async()=>{src.disconnect();const text=await sr.stop();const blob=new Blob(chunks,{type:mr.mimeType});try{const ab=await blob.arrayBuffer();const buffer=await c.decodeAudioData(ab);const d=buffer.getChannelData(0);let peak=0;for(let i=0;i<d.length;i+=8)peak=Math.max(peak,Math.abs(d[i]));done({url:URL.createObjectURL(blob),buffer,peak,duration:buffer.duration,text});}catch(e){done(null)}};
+ mr.start(); loop(); rec={finish};
+ return result;
+}
+let mine=null;
+function stopMine(){ if(mine){ mine.pause(); mine.currentTime=0; } }
+function playMine(r,btn){
+ stopAudio(); stopMine(); mine=new Audio(r.url);
+ const reset=()=>{ if(btn) btn.textContent='▶ Listen to my answer'; };
+ mine.onended=reset; mine.onpause=reset;
+ if(btn) btn.textContent='■ Playing… (click to stop)';
+ mine.play().catch(()=>{ reset(); const b=document.createElement('div'); b.className='msg'; b.style.flexBasis='100%'; b.textContent='Your answer could not play. Check that your headphones are plugged in and the volume is up.'; $('#dock').appendChild(b); });
+}
+
+/* ---------- screens ---------- */
+function bubble(l){return `<div class="line"><div class="av ${l.who}"><span>${NAMES[l.who][0]}</span></div><div class="bub"><small>${NAMES[l.who]}</small><span class="tx">${esc(l.text)}</span></div></div>`}
+function render(){
+ stopAudio(); stopMine(); if(meterStop) meterStop(); drawProg(); const s=steps[idx]; window.scrollTo(0,0);
+ if(s.type==='welcome') return welcome();
+ if(s.type==='intro') return intro();
+ if(s.type==='finish') return finish();
+ return task(s);
+}
+function landing(){
+ document.getElementById('prog').innerHTML='';
+ app.innerHTML=`<div class="card"><h2>Speaking Practice</h2><p class="sub">Your teacher will give you a link to your practice. Open that link to start.</p><div class="dock"><button class="primary" id="demo">Try a sample practice</button><a class="ghost" style="display:inline-flex;align-items:center;min-height:48px;padding:10px 20px;border-radius:14px;text-decoration:none" href="teacher.html">For teachers</a></div></div>`;
+ $('#demo').onclick=()=>{ setup(['a01','a05','a24','a12']); idx=0; render(); };
+}
+function welcome(){
+ const n=TASKS.length-1;
+ app.innerHTML=`<div class="card"><h2>${esc(CFG.name||'Speaking Practice')}</h2><p class="sub">You will answer ${n} question${n===1?'':'s'}. Use headphones and a microphone. Listen, then speak.</p>
+ <form class="form" id="f"><label>First name<input id="fn" autocomplete="given-name" required value="${esc(student.first)}"></label><label>Last name<input id="ln" autocomplete="family-name" required value="${esc(student.last)}"></label><label>Class period<input id="pd" inputmode="numeric" value="${esc(student.period)}"></label><div><button class="primary" type="submit">Start</button></div></form></div>`;
+ $('#f').onsubmit=e=>{e.preventDefault();student={first:$('#fn').value.trim(),last:$('#ln').value.trim(),period:$('#pd').value.trim()};if(!student.first||!student.last)return;idx++;render();};
+}
+function intro(){
+ app.innerHTML=`<div class="card"><h2>How it works</h2><div class="talk">${INTRO.map(bubble).join('')}</div><div class="dock"><button class="primary" id="go">▶ Play</button><button class="ghost" id="nx">Next →</button></div></div>`;
+ const els=[...app.querySelectorAll('.line')];
+ $('#go').onclick=()=>{ $('#go').textContent='▶ Play again'; playLines(INTRO,i=>els.forEach((e,j)=>{e.classList.toggle('live',j===i);e.classList.toggle('past',j<i)})); };
+ $('#nx').onclick=()=>{idx++;render();};
+}
+
+function task(s){
+ const isMic=s.type==='mic', t=s.t;
+ const lines=isMic?[MIC]:[{id:t.id+'_i',who:'guide',text:t.intro},{id:t.id+'_a',who:'guide',text:t.ask},{id:t.id+'_m',who:t.who,text:t.model},{id:t.id+'_y',who:'guide',text:t.you}];
+ const head=isMic?`<b>Microphone check</b><span>Not graded</span>`:`<b>Question ${s.n} of ${TASKS.length-1} · ${esc(t.title)}</b><span>${esc(t.area)}</span>`;
+ const pic=isMic?PICS.mic():renderVis(t.vis);
+ const terms=(!isMic&&CFG.words)?`<div class="keyterms"><h4>Key words to use</h4><div class="words">${t.terms.map(w=>`<span>${esc(w)}</span>`).join('')}</div></div>`:'';
+ const micbox=isMic?`<div class="micbox"><ol class="steps"><li>Click <b>Test my microphone</b>.</li><li>Chrome asks to use the microphone. Click <b>Allow</b>.</li><li>Choose your headset. No headset? Choose <b>Microphone Array</b>.</li><li>Talk. The green bar moves? Good! Press <b>Start</b>.</li></ol><label>Microphone<select id="micsel"><option value="">Click "Test my microphone"</option></select></label><div class="dock" style="margin-top:4px"><button class="ghost" id="mtest">🎤 Test my microphone</button><div><div class="sub" style="margin:0;font-size:14px">Talk. Does the green bar move?</div><div class="meter wide"><b id="mlv"></b></div></div></div><div id="mmsg"></div></div>`:'';
+ const capBtn=(CFG.caps||isMic)?`<button class="ghost" id="cap">${captions||isMic?'Hide text':'Show text'}</button>`:'';
+ const capOn=isMic||captions;
+ app.innerHTML=`<div class="stage"><div class="pic"><div class="pichead">${head}</div>${pic}</div>
+ <div class="card ${capOn?'':'nocap'}" id="side"><div class="talk" id="talk">${lines.map(bubble).join('')}</div>
+ <div class="tools"><button class="ghost" id="replay">⟲ Replay question</button>${capBtn}</div>${terms}${micbox}</div></div>
+ <div class="dock card" id="dock"></div>`;
+ const els=[...app.querySelectorAll('#talk .line')];
+ const mark=i=>els.forEach((e,j)=>{e.classList.toggle('live',j===i);e.classList.toggle('past',j<i)});
+ const listen=async()=>{dockListen(); if(await playLines(lines,mark)) dockReady();};
+ $('#replay').onclick=()=>{ if(rec) return; listen(); };
+ if($('#cap')) $('#cap').onclick=()=>{ const on=$('#side').classList.toggle('nocap'); if(!isMic) captions=!on; $('#cap').textContent=on?'Show text':'Hide text'; };
+ const dock=$('#dock');
+ if(isMic){
+  const sel=$('#micsel'), mmsg=$('#mmsg'), btn=$('#mtest'); let checkT=null;
+  const fill=async()=>{ const ms=await listMics(); const cur=stream&&stream.getAudioTracks()[0]; const curId=cur&&cur.getSettings?cur.getSettings().deviceId:''; sel.innerHTML=ms.map((d,i)=>`<option value="${esc(d.deviceId)}" ${d.deviceId===(micId||curId)?'selected':''}>${esc(d.label||('Microphone '+(i+1)))}</option>`).join('')||'<option value="">No microphone found</option>'; };
+  const test=async()=>{
+   clearTimeout(checkT); btn.disabled=true; btn.textContent='Starting…'; mmsg.innerHTML='';
+   const slow=setTimeout(()=>{ mmsg.innerHTML='<div class="msg">Look for a box at the top of Chrome asking to use your microphone. Click <b>Allow</b>.</div>'; },3000);
+   try{
+    await liveMeter($('#mlv')); clearTimeout(slow); await fill();
+    btn.textContent='🎤 Testing… talk now'; mmsg.innerHTML='<p class="sub" style="margin:0">Using: <b>'+esc(micLabel()||'microphone')+'</b></p>';
+    checkT=setTimeout(()=>{ btn.disabled=false; btn.textContent='🎤 Test again';
+     mmsg.innerHTML+= meterMax>4 ? '<div class="msg good">Your microphone works. Press <b>Start</b> below.</div>' : '<div class="msg">This microphone sends no sound. Pick a different one in the list. If none work, your computer may be blocking Chrome from the microphone (ask your teacher).</div>'; },5000);
+   }catch(e){ clearTimeout(slow); btn.disabled=false; btn.textContent='🎤 Test my microphone'; mmsg.innerHTML=micError(e); }
+  };
+  btn.onclick=test;
+  sel.onchange=async()=>{ micId=sel.value; closeMic(); await test(); };
+ }
+ function dockStart(){dock.innerHTML=`<button class="primary" id="st">▶ Start</button><span class="sub" style="margin:0">Listen to the guide${isMic?'':' and the other student'}.</span>`;$('#st').onclick=listen;}
+ function dockListen(){dock.innerHTML=`<span class="sub" style="margin:0">Listening…</span><button class="ghost" id="sk">Skip to my turn</button>`;$('#sk').onclick=()=>{stopAudio();mark(lines.length);dockReady();};}
+ function dockReady(err=''){
+  dock.innerHTML=`<button class="recbtn" id="rb">Start speaking</button><span class="sub" style="margin:0">You have ${s.time} seconds.</span>${!isMic?'<button class="ghost" id="skip">Skip this question</button>':''}${err}`;
+  $('#rb').onclick=doRec; if($('#skip')) $('#skip').onclick=()=>{recs[s.key]=null;idx++;render();};
+ }
+ async function doRec(){
+  stopAudio(); stopMine(); if(meterStop) meterStop(); mark(lines.length);
+  const C=2*Math.PI*27;
+  dock.innerHTML=`<div class="timer"><svg class="ring" viewBox="0 0 64 64"><circle cx="32" cy="32" r="27" stroke="var(--line)"/><circle id="arc" cx="32" cy="32" r="27" stroke="var(--rec)" stroke-dasharray="${C}" stroke-dashoffset="0" transform="rotate(-90 32 32)"/></svg><div><div style="display:flex;gap:8px;align-items:center"><span class="recdot"></span><span id="sec">${s.time}</span> seconds left</div><div class="meter" title="Your voice"><b id="lv"></b></div></div></div><button class="primary" id="dn" disabled>I'm done</button>`;
+  setTimeout(()=>{const d=$('#dn'); if(d&&d.textContent==="I'm done") d.disabled=false;},4000);
+  try{
+   const res=startRec(s.time,el=>{const a=$('#arc'),sc=$('#sec');if(a)a.style.strokeDashoffset=String(C*el/s.time);if(sc)sc.textContent=Math.max(0,Math.ceil(s.time-el));},v=>{const b=$('#lv');if(b)b.style.width=(v*100)+'%'});
+   $('#dn').onclick=()=>{ if(rec){ $('#dn').disabled=true; $('#dn').textContent='Saving…'; rec.finish(); } };
+   const b=await res; rec=null;
+   if(!b) throw new Error('decode');
+   recs[s.key]=b; drawProg(); dockDone(b);
+  }catch(e){ rec=null; dockReady(micError(e)); }
+ }
+ function dockDone(b){
+  const quiet=b.peak<0.01, canRetry=isMic||CFG.retry;
+  const warn=quiet?'<div class="msg" style="flex-basis:100%">We could not hear your voice'+(micLabel()?' on <b>'+esc(micLabel())+'</b>':'')+'. '+(isMic?'Choose a different microphone above, press <b>Test my microphone</b>, and talk. When the green bar moves, press <b>Try again</b>.':'Ask your teacher for help.')+'</div>':isMic?'<div class="msg good" style="flex-basis:100%">Can you hear your voice? If you hear nothing, check your headphones and volume, then press <b>Try again</b>.</div>':'';
+  dock.innerHTML=`<button class="ghost" id="pl">▶ Listen to my answer</button>${canRetry?'<button class="ghost" id="ag">Try again</button>':''}<button class="primary" id="nx">Next →</button>${warn}`;
+  $('#pl').onclick=e=>{ if(mine&&!mine.paused){stopMine();return;} playMine(b,e.currentTarget); };
+  if($('#ag')) $('#ag').onclick=()=>{stopMine();doRec()};
+  $('#nx').onclick=()=>{stopMine();idx++;render()};
+ }
+ if(recs[s.key]){mark(lines.length);dockDone(recs[s.key]);} else dockStart();
+}
+function micError(e){
+ const n=e&&e.name;
+ if(n==='NotAllowedError'||n==='SecurityError') return `<div class="msg" style="flex-basis:100%">The microphone is blocked. Look at the top of Chrome, next to the web address. Click the icon and choose <b>Allow</b> for the microphone. Then try again.</div>`;
+ if(n==='NotFoundError') return `<div class="msg" style="flex-basis:100%">No microphone found. Plug in your headset, then try again.</div>`;
+ return `<div class="msg" style="flex-basis:100%">The recording did not work. Close other apps that use the microphone, then try again.</div>`;
+}
+
+/* ---------- finish: recording + transcript ---------- */
+function finish(){
+ const label=s=>s.type==='mic'?'Microphone check':'Question '+s.n+' · '+s.t.title;
+ const prompt=s=>s.type==='mic'?MIC.text:s.t.you;
+ const said=s=>{ const r=recs[s.key]; if(!r) return null; if(r.text===null||r.text===undefined) return undefined; return r.text; };
+ const saidHtml=s=>{ const x=said(s); return x===null?'<i>No answer</i>':x===undefined?'<i>Transcript not available</i>':x?esc(x):'<i>No words heard</i>'; };
+ const rows=TASKS.map(s=>`<div class="tr"><div class="trh"><b>${esc(label(s))}</b><span>${recs[s.key]?Math.round(recs[s.key].duration)+' sec':''}</span></div><p class="trq">${esc(prompt(s))}</p>${CFG.stt?`<p class="tra">${saidHtml(s)}</p>`:''}</div>`).join('');
+ app.innerHTML=`<div class="card"><h2>Great job, ${esc(student.first)}!</h2><p class="sub">You finished. ${CFG.stt?'Save your recording and your transcript, then upload both files':'Save your recording, then upload it'} to your Canvas assignment.</p>
+ <div class="dock"><button class="primary" id="sv">${CFG.stt?'1. ':''}Save my recording</button>${CFG.stt?'<button class="primary" id="st2">2. Save my transcript</button>':''}<button class="ghost" id="bk">← Go back</button></div><div id="out"></div>
+ <h3 style="margin:26px 0 4px">${CFG.stt?'Transcript':'Your answers'}</h3>${CFG.stt?'<p class="sub" style="font-size:14px">Made by the computer. It may have mistakes. Your teacher will listen to your recording.</p>':''}<div class="trs">${rows}</div></div>`;
+ play('end').catch(()=>{});
+ const d=new Date(), ds=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+ const safe=x=>x.replace(/[^A-Za-z0-9\-]+/g,'');
+ const base=`${safe(student.last)}_${safe(student.first)}${student.period?'_P'+safe(student.period):''}_SpeakingPractice_${ds}`;
+ const give=(blob,name,what)=>{ const url=URL.createObjectURL(blob); $('#out').innerHTML=`<div class="msg good"><p style="margin:0 0 10px">Your ${what} is ready: <b>${esc(name)}</b></p><a class="primary" style="display:inline-block;text-decoration:none;border-radius:14px;padding:12px 22px" href="${url}" download="${esc(name)}">Download ${what}</a><p style="margin:12px 0 0">Next: open your Canvas assignment, choose <b>Upload</b>, and pick this file from your Downloads folder.</p></div>`; const a=document.createElement('a');a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove(); };
+ $('#bk').onclick=()=>{idx=steps.findIndex(s=>s.type==='task'&&!recs[s.key]); if(idx<0) idx=steps.length-2; render();};
+ $('#sv').onclick=async()=>{
+  $('#sv').disabled=true; $('#out').innerHTML='<p class="sub">Making your file…</p>';
+  try{ give(await buildWav(), base+'.wav', 'recording'); }catch(e){ $('#out').innerHTML='<div class="msg">Sorry, the file could not be made. Please tell your teacher.</div>'; }
+  $('#sv').disabled=false;
+ };
+ if($('#st2')) $('#st2').onclick=()=>{
+  const L=[`Speaking Practice - Transcript${CFG.name?' - '+CFG.name:''}`,`Student: ${student.first} ${student.last}${student.period?'   Period: '+student.period:''}`,`Date: ${d.toLocaleString()}`,`Automatic transcript - it may contain mistakes. Listen to the recording to grade.`,''];
+  for(const s of TASKS){ const x=said(s); L.push('='.repeat(60), label(s).toUpperCase()+(s.t?`  [${s.t.id}, WIDA ${s.t.level}, ${s.t.area}]`:'')+(recs[s.key]?`  (${Math.round(recs[s.key].duration)} sec)`:''), 'Prompt: '+prompt(s), ...(s.t?['Key words: '+s.t.terms.join(', ')]:[]), '', 'Student: '+(x===null?'[No answer]':x===undefined?'[Transcript not available]':x||'[No words heard]'), ''); }
+  give(new Blob([L.join('\r\n')],{type:'text/plain'}), base+'_transcript.txt', 'transcript');
+ };
+}
+async function decodeLabel(key){const bin=atob(BANK.labelAudio[key]);const u=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i);return ctx().decodeAudioData(u.buffer);}
+async function toMono(buf,sr,norm){
+ const oc=new OfflineAudioContext(1,Math.max(1,Math.ceil(buf.duration*sr)),sr);const s=oc.createBufferSource();s.buffer=buf;s.connect(oc.destination);s.start();
+ const r=(await oc.startRendering()).getChannelData(0);
+ if(norm){let m=0;for(const v of r)m=Math.max(m,Math.abs(v));const g=m>0.01?Math.min(4,0.9/m):1;for(let i=0;i<r.length;i++)r[i]*=g;}
+ return r;
+}
+async function buildWav(){
+ const sr=16000, parts=[], gap=n=>new Float32Array(Math.round(sr*n));
+ for(const s of TASKS){
+  parts.push(await toMono(await decodeLabel(s.key),sr,false), gap(.3));
+  parts.push(recs[s.key]?await toMono(recs[s.key].buffer,sr,true):gap(1), gap(1.2));
+ }
+ const len=parts.reduce((a,p)=>a+p.length,0), dv=new DataView(new ArrayBuffer(44+len*2));
+ const w=(o,t)=>{for(let i=0;i<t.length;i++)dv.setUint8(o+i,t.charCodeAt(i))};
+ w(0,'RIFF');dv.setUint32(4,36+len*2,true);w(8,'WAVE');w(12,'fmt ');dv.setUint32(16,16,true);dv.setUint16(20,1,true);dv.setUint16(22,1,true);dv.setUint32(24,sr,true);dv.setUint32(28,sr*2,true);dv.setUint16(32,2,true);dv.setUint16(34,16,true);w(36,'data');dv.setUint32(40,len*2,true);
+ let o=44; for(const p of parts) for(const v of p){dv.setInt16(o,Math.max(-1,Math.min(1,v))*32767,true);o+=2;}
+ return new Blob([dv],{type:'audio/wav'});
+}
+
+window.addEventListener('beforeunload',e=>{ if(Object.values(recs).some(Boolean)){ e.preventDefault(); e.returnValue=''; } });
+if(CFG.ids.length){ setup(CFG.ids); render(); } else landing();
+}
+</script>
+</body>
+</html>
