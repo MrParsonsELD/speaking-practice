@@ -98,14 +98,16 @@ async function liveMeter(barEl){
 
 /* ---------- live speech-to-text (Chrome's built-in recognizer) ---------- */
 const STT=window.SpeechRecognition||window.webkitSpeechRecognition;
-function startSTT(){
- if(!STT||!CFG.stt) return {stop:async()=>null};
- let finals=[], interim='', running=true, r=null, ended=null, failed=false;
+let sttErr='', sttLive=null;
+const STT_WHY={'audio-capture':"Chrome's speech recognition could not use the microphone. Make the headset or Microphone Array the computer's default microphone.",'no-speech':'Chrome did not hear any speech.','network':"Chrome could not connect to Google's speech service. Check the internet connection.",'not-allowed':'Speech recognition is blocked in Chrome.','service-not-allowed':'Speech recognition is turned off on this computer or by the school.','language-not-supported':'English speech recognition is not available.'};
+function startSTT(force){
+ if(!STT||(!CFG.stt&&!force)) return {stop:async()=>null};
+ let finals=[], interim='', running=true, r=null, ended=null, failed=false; sttErr='';
  const make=()=>{
   try{
    r=new STT(); r.lang='en-US'; r.continuous=true; r.interimResults=true; r.maxAlternatives=1;
-   r.onresult=e=>{ interim=''; for(let i=e.resultIndex;i<e.results.length;i++){ const x=e.results[i]; if(x.isFinal) finals.push(x[0].transcript.trim()); else interim+=x[0].transcript; } };
-   r.onerror=e=>{ if(['not-allowed','service-not-allowed','network','language-not-supported'].includes(e.error)){ running=false; failed=true; } };
+   r.onresult=e=>{ interim=''; for(let i=e.resultIndex;i<e.results.length;i++){ const x=e.results[i]; if(x.isFinal) finals.push(x[0].transcript.trim()); else interim+=x[0].transcript; } if(sttLive) sttLive([...finals,interim].join(' ')); };
+   r.onerror=e=>{ if(e.error!=='aborted') sttErr=e.error; if(['not-allowed','service-not-allowed','network','language-not-supported','audio-capture'].includes(e.error)){ running=false; failed=true; } };
    r.onend=()=>{ if(running){ make(); } else if(ended){ ended(); } };
    r.start();
   }catch(e){ running=false; r=null; if(ended) ended(); }
@@ -132,7 +134,7 @@ async function startRec(seconds,onTick,onLevel){
  let done; const result=new Promise(r=>done=r);
  function finish(){ if(mr.state==='inactive')return; cancelAnimationFrame(raf); mr.stop(); }
  const sr=startSTT();
- mr.onstop=async()=>{src.disconnect();const text=await sr.stop();const blob=new Blob(chunks,{type:mr.mimeType});try{const ab=await blob.arrayBuffer();const buffer=await c.decodeAudioData(ab);const d=buffer.getChannelData(0);let peak=0;for(let i=0;i<d.length;i+=8)peak=Math.max(peak,Math.abs(d[i]));done({url:URL.createObjectURL(blob),buffer,peak,duration:buffer.duration,text});}catch(e){done(null)}};
+ mr.onstop=async()=>{src.disconnect();const text=await sr.stop(); const sttWhy=sttErr;const blob=new Blob(chunks,{type:mr.mimeType});try{const ab=await blob.arrayBuffer();const buffer=await c.decodeAudioData(ab);const d=buffer.getChannelData(0);let peak=0;for(let i=0;i<d.length;i+=8)peak=Math.max(peak,Math.abs(d[i]));done({url:URL.createObjectURL(blob),buffer,peak,duration:buffer.duration,text,sttWhy});}catch(e){done(null)}};
  mr.start(); loop(); rec={finish};
  return result;
 }
@@ -179,7 +181,7 @@ function task(s){
  const head=isMic?`<b>Microphone check</b><span>Not graded</span>`:`<b>Question ${s.n} of ${TASKS.length-1} · ${esc(t.title)}</b><span>${esc(t.area)}</span>`;
  const pic=isMic?PICS.mic():renderVis(t.vis);
  const terms=(!isMic&&CFG.words)?`<div class="keyterms"><h4>Key words to use</h4><div class="words">${t.terms.map(w=>`<span>${esc(w)}</span>`).join('')}</div></div>`:'';
- const micbox=isMic?`<div class="micbox"><ol class="steps"><li>Click <b>Test my microphone</b>.</li><li>Chrome asks to use the microphone. Click <b>Allow</b>.</li><li>Choose your headset. No headset? Choose <b>Microphone Array</b>.</li><li>Talk. The green bar moves? Good! Press <b>Start</b>.</li></ol><label>Microphone<select id="micsel"><option value="">Click "Test my microphone"</option></select></label><div class="dock" style="margin-top:4px"><button class="ghost" id="mtest">🎤 Test my microphone</button><div><div class="sub" style="margin:0;font-size:14px">Talk. Does the green bar move?</div><div class="meter wide"><b id="mlv"></b></div></div></div><div id="mmsg"></div></div>`:'';
+ const micbox=isMic?`<div class="micbox"><ol class="steps"><li>Click <b>Test my microphone</b>.</li><li>Chrome asks to use the microphone. Click <b>Allow</b>.</li><li>Choose your headset. No headset? Choose <b>Microphone Array</b>.</li><li>Talk. The green bar moves? Good! Press <b>Start</b>.</li></ol><label>Microphone<select id="micsel"><option value="">Click "Test my microphone"</option></select></label><div class="dock" style="margin-top:4px"><button class="ghost" id="mtest">🎤 Test my microphone</button><div><div class="sub" style="margin:0;font-size:14px">Talk. Does the green bar move?</div><div class="meter wide"><b id="mlv"></b></div></div></div><div id="mmsg"></div>${CFG.stt&&STT?`<div class="dock" style="margin-top:4px"><button class="ghost" id="ttest">📝 Test the transcript</button></div><div id="tmsg"></div>`:''}</div>`:'';
  const capBtn=(CFG.caps||isMic)?`<button class="ghost" id="cap">${captions||isMic?'Hide text':'Show text'}</button>`:'';
  const capOn=isMic||captions;
  app.innerHTML=`<div class="stage"><div class="pic"><div class="pichead">${head}</div>${pic}</div>
@@ -206,6 +208,15 @@ function task(s){
    }catch(e){ clearTimeout(slow); btn.disabled=false; btn.textContent='🎤 Test my microphone'; mmsg.innerHTML=micError(e); }
   };
   btn.onclick=test;
+  if($('#ttest')) $('#ttest').onclick=async()=>{
+   const tb=$('#ttest'), tm=$('#tmsg'); tb.disabled=true; tb.textContent='📝 Listening… say a sentence';
+   tm.innerHTML='<p class="tra" id="tlive"><i>Words will appear here…</i></p>';
+   sttLive=x=>{ const el=$('#tlive'); if(el) el.textContent=x; };
+   const sr=startSTT(true); await new Promise(r=>setTimeout(r,7000)); const x=await sr.stop(); sttLive=null;
+   tb.disabled=false; tb.textContent='📝 Test the transcript again';
+   tm.innerHTML= x ? '<div class="msg good">The transcript works. It heard: <b>'+esc(x)+'</b></div>'
+    : '<div class="msg">The transcript did not hear you. '+esc(STT_WHY[sttErr]||(sttErr?'Error: '+sttErr:'Chrome did not send back any words.'))+'</div>';
+  };
   sel.onchange=async()=>{ micId=sel.value; closeMic(); await test(); };
  }
  function dockStart(){dock.innerHTML=`<button class="primary" id="st">▶ Start</button><span class="sub" style="margin:0">Listen to the guide${isMic?'':' and the other student'}.</span>`;$('#st').onclick=listen;}
@@ -249,7 +260,8 @@ function finish(){
  const label=s=>s.type==='mic'?'Microphone check':'Question '+s.n+' · '+s.t.title;
  const prompt=s=>s.type==='mic'?MIC.text:s.t.you;
  const said=s=>{ const r=recs[s.key]; if(!r) return null; if(r.text===null||r.text===undefined) return undefined; return r.text; };
- const saidHtml=s=>{ const x=said(s); return x===null?'<i>No answer</i>':x===undefined?'<i>Transcript not available</i>':x?esc(x):'<i>No words heard</i>'; };
+ const why=s=>{ const r=recs[s.key]; return r&&r.sttWhy?(STT_WHY[r.sttWhy]||('Error: '+r.sttWhy)):''; };
+ const saidHtml=s=>{ const x=said(s); const w=why(s); return x===null?'<i>No answer</i>':x===undefined?'<i>Transcript not available.</i> '+esc(w):x?esc(x):'<i>No words heard.</i> '+esc(w); };
  const rows=TASKS.map(s=>`<div class="tr"><div class="trh"><b>${esc(label(s))}</b><span>${recs[s.key]?Math.round(recs[s.key].duration)+' sec':''}</span></div><p class="trq">${esc(prompt(s))}</p>${CFG.stt?`<p class="tra">${saidHtml(s)}</p>`:''}</div>`).join('');
  app.innerHTML=`<div class="card"><h2>Great job, ${esc(student.first)}!</h2><p class="sub">You finished. ${CFG.stt?'Save your recording and your transcript, then upload both files':'Save your recording, then upload it'} to your Canvas assignment.</p>
  <div class="dock"><button class="primary" id="sv">${CFG.stt?'1. ':''}Save my recording</button>${CFG.stt?'<button class="primary" id="st2">2. Save my transcript</button>':''}<button class="ghost" id="bk">← Go back</button></div><div id="out"></div>
@@ -267,7 +279,7 @@ function finish(){
  };
  if($('#st2')) $('#st2').onclick=()=>{
   const L=[`Speaking Practice - Transcript${CFG.name?' - '+CFG.name:''}`,`Student: ${student.first} ${student.last}${student.period?'   Period: '+student.period:''}`,`Date: ${d.toLocaleString()}`,`Automatic transcript - it may contain mistakes. Listen to the recording to grade.`,''];
-  for(const s of TASKS){ const x=said(s); L.push('='.repeat(60), label(s).toUpperCase()+(s.t?`  [${s.t.id}, WIDA ${s.t.level}, ${s.t.area}]`:'')+(recs[s.key]?`  (${Math.round(recs[s.key].duration)} sec)`:''), 'Prompt: '+prompt(s), ...(s.t?['Key words: '+s.t.terms.join(', ')]:[]), '', 'Student: '+(x===null?'[No answer]':x===undefined?'[Transcript not available]':x||'[No words heard]'), ''); }
+  for(const s of TASKS){ const x=said(s); L.push('='.repeat(60), label(s).toUpperCase()+(s.t?`  [${s.t.id}, WIDA ${s.t.level}, ${s.t.area}]`:'')+(recs[s.key]?`  (${Math.round(recs[s.key].duration)} sec)`:''), 'Prompt: '+prompt(s), ...(s.t?['Key words: '+s.t.terms.join(', ')]:[]), '', 'Student: '+(x===null?'[No answer]':x===undefined?'[Transcript not available. '+why(s)+']':x||'[No words heard. '+why(s)+']'), ''); }
   give(new Blob([L.join('\r\n')],{type:'text/plain'}), base+'_transcript.txt', 'transcript');
  };
 }
