@@ -14,37 +14,52 @@ const SH={
 };
 const KEYS=Object.keys(SH.X);
 const lerp=(a,b,t)=>{const o={};for(const k of KEYS)o[k]=a[k]+(b[k]-a[k])*t;return o;};
-function mouthSvg(){
- return `<svg class="mouth" viewBox="0 0 320 230" role="img" aria-label="Animated mouth">
- <defs><clipPath id="mclip"><path id="m-in-c"/></clipPath><linearGradient id="mbg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#eef4fe"/><stop offset="1" stop-color="#e3edfc"/></linearGradient></defs>
- <rect width="320" height="230" fill="url(#mbg)"/>
- <path d="M0 150Q40 150 70 178Q110 222 160 224Q210 222 250 178Q280 150 320 150V230H0Z" fill="#d3e2fa"/>
- <path d="M0 150Q40 150 70 178Q110 222 160 224Q210 222 250 178Q280 150 320 150" stroke="#3d7be0" stroke-width="2" fill="none"/>
- <path d="M146 16Q160 34 174 16" stroke="#3d7be0" stroke-width="3" fill="none" stroke-linecap="round"/>
- <path d="M148 186Q160 180 172 186" stroke="#a9c4ef" stroke-width="2.5" fill="none" stroke-linecap="round"/>
- <path id="m-out" fill="#ffffff" stroke="#3d7be0" stroke-width="2" stroke-linejoin="round"/>
- <path id="m-in" fill="#c9daf6" stroke="#1f2a44" stroke-width="2"/>
- <g clip-path="url(#mclip)"><rect id="m-tt" x="90" width="140" rx="5" fill="#ffffff" stroke="#9db9e8" stroke-width="1.5"/><rect id="m-bt" x="100" width="120" rx="5" fill="#ffffff" stroke="#9db9e8" stroke-width="1.5"/><ellipse id="m-tg" fill="#a9c4ef"/></g>
- <rect id="m-lb" x="118" width="84" height="12" rx="5" fill="#ffffff" stroke="#9db9e8" stroke-width="1.5"/>
- <ellipse id="m-tgo" cx="160" rx="20" ry="7" fill="#a9c4ef" stroke="#3d7be0" stroke-width="1.5"/>
- <path id="m-line" stroke="#1f2a44" stroke-width="3" fill="none" stroke-linecap="round"/>
+const BLUE='#3d7be0', NAVY='#1f2a44';
+const STYLES={
+ face:{name:'Full face, line drawing',vb:[240,260],cx:120,cy:190,k:.5,
+  bg:'<rect width="240" height="260" fill="#eef4fe"/><path d="M120 18C70 18 42 58 42 112C42 190 82 238 120 238C158 238 198 190 198 112C198 58 170 18 120 18Z" fill="#ffffff" stroke="#3d7be0" stroke-width="2.5"/><path d="M42 120q-12 0-12 16t14 18M198 120q12 0 12 16t-14 18" stroke="#3d7be0" stroke-width="2.5" fill="none"/><path d="M78 96q14-8 28 0M134 96q14-8 28 0" stroke="#1f2a44" stroke-width="3" fill="none" stroke-linecap="round"/><ellipse cx="92" cy="116" rx="7" ry="8" fill="#1f2a44"/><ellipse cx="148" cy="116" rx="7" ry="8" fill="#1f2a44"/><path d="M114 128q-6 18 2 22q8 3 12-2" stroke="#3d7be0" stroke-width="2.5" fill="none" stroke-linecap="round"/>',
+  lip:'#ffffff',lipS:BLUE,inner:'#c9daf6',innerS:NAVY,teeth:'#ffffff',teethS:'#9db9e8',tongue:'#a9c4ef',line:NAVY},
+ close:{name:'Close-up, line drawing',vb:[240,240],cx:120,cy:118,k:.78,
+  bg:'<rect width="240" height="240" fill="#eef4fe"/><path d="M0 70Q22 74 34 120Q52 214 120 220Q188 214 206 120Q218 74 240 70V240H0Z" fill="#d3e2fa"/><path d="M0 70Q22 74 34 120Q52 214 120 220Q188 214 206 120Q218 74 240 70" stroke="#3d7be0" stroke-width="2" fill="none"/><path d="M108 22Q120 38 132 22" stroke="#3d7be0" stroke-width="3" fill="none" stroke-linecap="round"/><path d="M110 182Q120 176 130 182" stroke="#a9c4ef" stroke-width="2.5" fill="none" stroke-linecap="round"/>',
+  lip:'#ffffff',lipS:BLUE,inner:'#c9daf6',innerS:NAVY,teeth:'#ffffff',teethS:'#9db9e8',tongue:'#a9c4ef',line:NAVY},
+ cartoon:{name:'Friendly cartoon, color',vb:[240,260],cx:120,cy:186,k:.5,
+  bg:'<rect width="240" height="260" fill="#fff6e9"/><circle cx="120" cy="132" r="104" fill="#ffd8a8" stroke="#e0a868" stroke-width="3"/><path d="M28 104Q40 26 120 24Q200 26 212 104Q170 64 120 66Q70 64 28 104Z" fill="#5b3a29"/><circle cx="84" cy="128" r="10" fill="#2a1d17"/><circle cx="156" cy="128" r="10" fill="#2a1d17"/><circle cx="87" cy="125" r="3" fill="#fff"/><circle cx="159" cy="125" r="3" fill="#fff"/><ellipse cx="66" cy="164" rx="14" ry="8" fill="#ffab9c" opacity=".7"/><ellipse cx="174" cy="164" rx="14" ry="8" fill="#ffab9c" opacity=".7"/><path d="M116 142q-4 12 4 14q8 1 10-4" stroke="#c98a55" stroke-width="3" fill="none" stroke-linecap="round"/>',
+  lip:'#e5737f',lipS:'#c0505d',inner:'#6b2230',innerS:'#4a1520',teeth:'#ffffff',teethS:'#e9dcd0',tongue:'#f09aa4',line:'#8a2c3a'},
+ half:{name:'Lower face, line drawing',vb:[36,122,168,128],cx:120,cy:190,k:.5,
+  bg:'<rect x="0" y="0" width="240" height="260" fill="#eef4fe"/><path d="M120 18C70 18 42 58 42 112C42 190 82 238 120 238C158 238 198 190 198 112C198 58 170 18 120 18Z" fill="#ffffff" stroke="#3d7be0" stroke-width="2.5"/><path d="M114 128q-6 18 2 22q8 3 12-2" stroke="#3d7be0" stroke-width="2.5" fill="none" stroke-linecap="round"/>',
+  lip:'#ffffff',lipS:BLUE,inner:'#c9daf6',innerS:NAVY,teeth:'#ffffff',teethS:'#9db9e8',tongue:'#a9c4ef',line:NAVY},
+ lips:{name:'Lips only, large',vb:[240,200],cx:120,cy:100,k:1.05,
+  bg:'<rect width="240" height="200" fill="#f3f6fb"/>',
+  lip:'#e36d7b',lipS:'#b84a58',inner:'#5c1f2b',innerS:'#3e121c',teeth:'#ffffff',teethS:'#dfe3ea',tongue:'#f29aa6',line:'#7e2633'}
+};
+let STYLE='half';
+function mouthSvg(style){
+ const S=STYLES[style||STYLE];
+ return `<svg class="mouth" viewBox="${S.vb.length===4?S.vb.join(' '):'0 0 '+S.vb[0]+' '+S.vb[1]}" data-style="${style||STYLE}" role="img" aria-label="Animated mouth">
+ <defs><clipPath id="mclip-${style||STYLE}"><path class="m-in-c"/></clipPath></defs>${S.bg}
+ <path class="m-out" fill="${S.lip}" stroke="${S.lipS}" stroke-width="2" stroke-linejoin="round"/>
+ <path class="m-in" fill="${S.inner}" stroke="${S.innerS}" stroke-width="2"/>
+ <g clip-path="url(#mclip-${style||STYLE})"><rect class="m-tt" rx="4" fill="${S.teeth}" stroke="${S.teethS}" stroke-width="1.5"/><rect class="m-bt" rx="4" fill="${S.teeth}" stroke="${S.teethS}" stroke-width="1.5"/><ellipse class="m-tg" fill="${S.tongue}"/></g>
+ <rect class="m-lb" rx="4" fill="${S.teeth}" stroke="${S.teethS}" stroke-width="1.5"/>
+ <ellipse class="m-tgo" fill="${S.tongue}" stroke="${S.lipS}" stroke-width="1.5"/>
+ <path class="m-line" stroke="${S.line}" stroke-width="3" fill="none" stroke-linecap="round"/>
  </svg>`;
 }
 function drawMouth(root,p){
- const cx=160, cy=118, hw=64*p.w*(1-.18*p.r), oh=4+60*p.o, $=id=>root.querySelector('#'+id);
+ const S=STYLES[root.dataset.style]||STYLES[STYLE], k=S.k, cx=S.cx, cy=S.cy, $=c=>root.querySelector('.'+c);
+ const hw=64*k*p.w*(1-.18*p.r), oh=(4+60*p.o)*k;
  const L=cx-hw, R=cx+hw, up=oh*(.62+.15*p.r), dn=oh*(.85+.1*p.r);
  const inner=`M${L} ${cy}C${L+hw*.25} ${cy-up} ${R-hw*.25} ${cy-up} ${R} ${cy}C${R-hw*.2} ${cy+dn} ${L+hw*.2} ${cy+dn} ${L} ${cy}Z`;
- const lt=9+4*p.r, lbt=12+5*p.r, ow=hw+8+5*p.r;
- const OL=cx-ow, OR=cx+ow;
- const outer=`M${OL} ${cy}C${OL+ow*.3} ${cy-up-lt-6} ${cx-16} ${cy-up-lt-4} ${cx} ${cy-up-lt+3}C${cx+16} ${cy-up-lt-4} ${OR-ow*.3} ${cy-up-lt-6} ${OR} ${cy}C${OR-ow*.25} ${cy+dn+lbt+4} ${OL+ow*.25} ${cy+dn+lbt+4} ${OL} ${cy}Z`;
+ const lt=(10+4*p.r)*k, lbt=(13+5*p.r)*k, ow=hw+(9+5*p.r)*k, OL=cx-ow, OR=cx+ow, b=4*k;
+ const outer=`M${OL} ${cy}C${OL+ow*.3} ${cy-up-lt-b*1.5} ${cx-16*k} ${cy-up-lt-b} ${cx} ${cy-up-lt+b*.75}C${cx+16*k} ${cy-up-lt-b} ${OR-ow*.3} ${cy-up-lt-b*1.5} ${OR} ${cy}C${OR-ow*.25} ${cy+dn+lbt+b} ${OL+ow*.25} ${cy+dn+lbt+b} ${OL} ${cy}Z`;
  $('m-out').setAttribute('d',outer); $('m-in').setAttribute('d',inner); $('m-in-c').setAttribute('d',inner);
  $('m-in').style.opacity=p.o<.03?0:1;
- $('m-line').setAttribute('d',`M${L+2} ${cy}Q${cx} ${cy+2} ${R-2} ${cy}`); $('m-line').style.opacity=p.o<.05?1:0;
- const tt=$('m-tt'); tt.setAttribute('y',cy-up*1.05); tt.setAttribute('height',6+14*p.tt); tt.style.opacity=p.tt>.05?1:0;
- const bt=$('m-bt'); bt.setAttribute('y',cy+dn-4-10*p.bt); bt.setAttribute('height',6+10*p.bt); bt.style.opacity=p.bt>.05?1:0;
- const tg=$('m-tg'); const up2=p.tg>1.5; tg.setAttribute('cx',cx); tg.setAttribute('cy',up2?cy-up*0.35:cy+dn*.75); tg.setAttribute('rx',hw*.55); tg.setAttribute('ry',up2?oh*.35:oh*.35+2);
- const lb=$('m-lb'); lb.setAttribute('y',cy-4); lb.style.opacity=p.lb>.5?1:0;
- const tgo=$('m-tgo'); tgo.setAttribute('cy',cy+3); tgo.style.opacity=(p.tg>.5&&p.tg<1.5)?1:0;
+ $('m-line').setAttribute('d',`M${L+2} ${cy}Q${cx} ${cy+2*k} ${R-2} ${cy}`); $('m-line').style.opacity=p.o<.05?1:0;
+ const tt=$('m-tt'); tt.setAttribute('x',cx-hw); tt.setAttribute('width',hw*2); tt.setAttribute('y',cy-up*1.05); tt.setAttribute('height',(6+14*p.tt)*k); tt.style.opacity=p.tt>.05?1:0;
+ const bt=$('m-bt'); bt.setAttribute('x',cx-hw*.85); bt.setAttribute('width',hw*1.7); bt.setAttribute('y',cy+dn-(4+10*p.bt)*k); bt.setAttribute('height',(6+10*p.bt)*k); bt.style.opacity=p.bt>.05?1:0;
+ const tg=$('m-tg'), up2=p.tg>1.5; tg.setAttribute('cx',cx); tg.setAttribute('cy',up2?cy-up*.35:cy+dn*.75); tg.setAttribute('rx',hw*.55); tg.setAttribute('ry',up2?oh*.35:oh*.35+2*k);
+ const lb=$('m-lb'); lb.setAttribute('x',cx-42*k); lb.setAttribute('width',84*k); lb.setAttribute('height',12*k); lb.setAttribute('y',cy-4*k); lb.style.opacity=p.lb>.5?1:0;
+ const tgo=$('m-tgo'); tgo.setAttribute('cx',cx); tgo.setAttribute('cy',cy+3*k); tgo.setAttribute('rx',20*k); tgo.setAttribute('ry',7*k); tgo.style.opacity=(p.tg>.5&&p.tg<1.5)?1:0;
 }
 function poseAt(tl,t){
  if(!tl||!tl.length) return SH.X;
@@ -140,5 +155,5 @@ function open(list,start,hooks){
  };
  draw();
 }
-window.Pron={open,itemsFor,mouthSvg,drawMouth,playClip,SH,stop,preload};
+window.Pron={open,itemsFor,mouthSvg,drawMouth,playClip,SH,stop,preload,STYLES,setStyle:s=>{if(STYLES[s])STYLE=s;}};
 })();
