@@ -30,7 +30,7 @@ const flag = (k,d) => q.has(k) ? q.get(k)!=='0' : d;
 const CFG = {
  ids: (q.get('t')||'').split(',').map(s=>s.trim()).filter(id=>BYID[id]).slice(0,12),
  time: parseInt(q.get('tm')||'0',10)||0,
- words: flag('w',true), retry: flag('r',true), caps: flag('c',true), stt: flag('x',true),
+ words: flag('w',true), retry: flag('r',true), caps: flag('c',true), stt: flag('x',true), fb: flag('f',true),
  name: (q.get('n')||'').slice(0,80)
 };
 if(CFG.name) { document.getElementById('ttl').textContent = 'Speaking Practice · ' + CFG.name; document.title = CFG.name; }
@@ -122,6 +122,64 @@ function startSTT(force){
  })};
 }
 
+/* ---------- practice feedback (rough, based on the automatic transcript) ---------- */
+const BANDS=['No response','Attempted','Adequate','Strong','Exemplary'];
+const CONNECT=['because','so','also','and','but','first','next','then','after that','finally','for example','however','if','when','since','another','in addition','for instance','that is why','i think','i believe'];
+function toks(s){ return (s||'').toLowerCase().replace(/[^a-z0-9' ]+/g,' ').split(/\s+/).filter(Boolean); }
+function stem(w){ for(const suf of ['ations','ation','ions','ion','ments','ment','ing','ied','ies','ed','es','s','e','y']) if(w.endsWith(suf)&&w.length-suf.length>=3){ let s=w.slice(0,-suf.length); if(/([b-df-hj-np-tv-z])\1$/.test(s)) s=s.slice(0,-1); return s; } return w; }
+function wordMatch(w,t){ if(t===w) return true; if(w.length<=2) return false; const a=stem(w), b=stem(t); if(a===b) return true; const [s,l]=a.length<=b.length?[a,b]:[b,a]; return s.length>=4 && l.startsWith(s) && l.length-s.length<=2; }
+function hasPhrase(words,phrase){ const p=toks(phrase); if(!p.length) return false; for(let i=0;i+p.length<=words.length;i++){ if(p.every((w,j)=>wordMatch(w,words[i+j]))) return true; } return false; }
+function termUsed(words,term){
+ if(term.includes(',')){ const parts=term.split(',').map(x=>x.trim()).filter(Boolean); return parts.filter(p=>hasPhrase(words,p)).length>=2; }
+ if(/ or /.test(term)) return term.split(/ or /).some(p=>hasPhrase(words,p));
+ return hasPhrase(words,term);
+}
+function analyze(t,text){
+ const words=toks(text), n=words.length, modelN=toks(t.model).length, hi=t.level==='3-4';
+ const used=t.terms.filter(x=>termUsed(words,x)), missed=t.terms.filter(x=>!used.includes(x));
+ const conns=CONNECT.filter(c=>hasPhrase(words,c)&&!['and'].includes(c));
+ const reason=['because','so','since','for example','for instance','that is why'].some(c=>hasPhrase(words,c));
+ const prompt=new Set(toks(t.you)); const own=words.filter(w=>!prompt.has(w)).length;
+ const idk=/\bi (don't|do not|dont) know\b/.test(words.join(' '));
+ const repeat=n>=3 && own/n<0.25;
+ let b;
+ if(n===0) b=0;
+ else if(idk&&n<8 || repeat || n<2) b=1;
+ else if(!hi){
+  b=2;
+  if(n>=10 && used.length>=1 && own>=6) b=3;
+  if(n>=Math.max(20,Math.round(modelN*0.9)) && used.length>=2 && conns.length>=1) b=4;
+ } else {
+  b=n>=5?2:1;
+  if(b===2 && n>=Math.max(25,Math.round(modelN*0.7)) && used.length>=2 && (reason||conns.length>=2)) b=3;
+  if(b===3 && n>=Math.max(45,Math.round(modelN*1.2)) && used.length>=3 && conns.length>=2) b=4;
+ }
+ const tips=[];
+ if(n===0) tips.push('The computer did not hear words. Speak louder and closer to the microphone.');
+ else {
+  if(idk) tips.push('Do not say "I don\'t know." Say what you can. Use words from the picture.');
+  if(repeat) tips.push('Do not repeat the question. Answer with your own words.');
+  const asked=missed.filter(x=>t.you.toLowerCase().includes(x.toLowerCase()));
+  if(asked.length) tips.push('The question asks you to use: '+asked.join(', ')+'. Try to use '+(asked.length>1?'them':'it')+'.');
+  else if(missed.length && used.length<(hi?3:2)) tips.push('Use more key words. Try: '+missed.slice(0,3).join(', ')+'.');
+  if(!reason && /why|reason|explain|because|justify|support/i.test(t.you)) tips.push(hi?'Explain your thinking. Add a reason with "because" or an example with "for example."':'Say why. Use "because."');
+  if(n<(hi?Math.max(25,modelN*0.7):10)) tips.push(hi?'Say more. Add another sentence with a detail or an example.':'Say more. Try two or three full sentences.');
+  if(hi && conns.length<2 && n>=15) tips.push('Connect your ideas with words like "first," "also," "however," and "for example."');
+  if(!tips.length) tips.push(b===4?'Excellent! Your answer is detailed and uses key words.':'Great answer. To make it even stronger, add one more detail or example.');
+ }
+ return {band:b,label:BANDS[b],next:b<4&&b>0?BANDS[b+1]:'',words:n,modelN,used,missed,reason,conns,tips:tips.slice(0,2)};
+}
+function feedbackHtml(t,r){
+ if(r.text===null||r.text===undefined) return `<div class="fb"><h4>Check your answer</h4><p class="note">The computer could not make a transcript${r.sttWhy?' ('+esc(STT_WHY[r.sttWhy]||r.sttWhy)+')':''}. Listen to your answer and check:</p><ul class="fbl"><li>Did I say two or more full sentences?</li><li>Did I use the key words?</li><li>Did I say why, with "because"?</li></ul></div>`;
+ const a=analyze(t,r.text); r.fb=a;
+ const who=t.who==='maya'?'Maya':'Leo';
+ return `<div class="fb"><div class="fbh"><h4>Practice feedback</h4><span class="band b${a.band}">${a.label}</span>${a.next?`<span class="note">Goal: ${a.next}</span>`:''}</div>
+ <p class="heard"><small>The computer heard:</small> ${r.text?esc(r.text):'<i>no words</i>'}</p>
+ <div class="fbkw"><small>Key words</small><div class="words">${t.terms.map(w=>`<span class="${a.used.includes(w)?'kw-yes':'kw-no'}">${a.used.includes(w)?'✓ ':''}${esc(w)}</span>`).join('')}</div></div>
+ <p class="note">You said ${a.words} word${a.words===1?'':'s'}. ${who} said ${a.modelN}.</p>
+ <ul class="fbl">${a.tips.map(x=>`<li>${esc(x)}</li>`).join('')}</ul>
+ <p class="note" style="margin:0">This is a practice estimate from the computer, not your WIDA score. The computer can make mistakes.</p></div>`;
+}
 /* ---------- recording ---------- */
 let rec=null;
 async function startRec(seconds,onTick,onLevel){
@@ -241,7 +299,9 @@ function task(s){
  function dockDone(b){
   const quiet=b.peak<0.01, canRetry=isMic||CFG.retry;
   const warn=quiet?'<div class="msg" style="flex-basis:100%">We could not hear your voice'+(micLabel()?' on <b>'+esc(micLabel())+'</b>':'')+'. '+(isMic?'Choose a different microphone above, press <b>Test my microphone</b>, and talk. When the green bar moves, press <b>Try again</b>.':'Ask your teacher for help.')+'</div>':isMic?'<div class="msg good" style="flex-basis:100%">Can you hear your voice? If you hear nothing, check your headphones and volume, then press <b>Try again</b>.</div>':'';
-  dock.innerHTML=`<button class="ghost" id="pl">▶ Listen to my answer</button>${canRetry?'<button class="ghost" id="ag">Try again</button>':''}<button class="primary" id="nx">Next →</button>${warn}`;
+  const fbk=(!isMic&&!quiet&&CFG.stt&&CFG.fb)?feedbackHtml(t,b):'';
+  dock.innerHTML=`${fbk}<button class="ghost" id="pl">▶ Listen to my answer</button>${canRetry?'<button class="ghost" id="ag">Try again</button>':''}<button class="primary" id="nx">Next →</button>${warn}`;
+  if(fbk) setTimeout(()=>dock.scrollIntoView({behavior:'smooth',block:'nearest'}),50);
   $('#pl').onclick=e=>{ if(mine&&!mine.paused){stopMine();return;} playMine(b,e.currentTarget); };
   if($('#ag')) $('#ag').onclick=()=>{stopMine();doRec()};
   $('#nx').onclick=()=>{stopMine();idx++;render()};
@@ -262,7 +322,8 @@ function finish(){
  const said=s=>{ const r=recs[s.key]; if(!r) return null; if(r.text===null||r.text===undefined) return undefined; return r.text; };
  const why=s=>{ const r=recs[s.key]; return r&&r.sttWhy?(STT_WHY[r.sttWhy]||('Error: '+r.sttWhy)):''; };
  const saidHtml=s=>{ const x=said(s); const w=why(s); return x===null?'<i>No answer</i>':x===undefined?'<i>Transcript not available.</i> '+esc(w):x?esc(x):'<i>No words heard.</i> '+esc(w); };
- const rows=TASKS.map(s=>`<div class="tr"><div class="trh"><b>${esc(label(s))}</b><span>${recs[s.key]?Math.round(recs[s.key].duration)+' sec':''}</span></div><p class="trq">${esc(prompt(s))}</p>${CFG.stt?`<p class="tra">${saidHtml(s)}</p>`:''}</div>`).join('');
+ const est=s=>{ const r=recs[s.key]; return (r&&s.t&&r.text!=null&&CFG.fb)?analyze(s.t,r.text).label:''; };
+ const rows=TASKS.map(s=>`<div class="tr"><div class="trh"><b>${esc(label(s))}</b><span>${est(s)?'Practice estimate: '+est(s)+' · ':''}${recs[s.key]?Math.round(recs[s.key].duration)+' sec':''}</span></div><p class="trq">${esc(prompt(s))}</p>${CFG.stt?`<p class="tra">${saidHtml(s)}</p>`:''}</div>`).join('');
  app.innerHTML=`<div class="card"><h2>Great job, ${esc(student.first)}!</h2><p class="sub">You finished. ${CFG.stt?'Save your recording and your transcript, then upload both files':'Save your recording, then upload it'} to your Canvas assignment.</p>
  <div class="dock"><button class="primary" id="sv">${CFG.stt?'1. ':''}Save my recording</button>${CFG.stt?'<button class="primary" id="st2">2. Save my transcript</button>':''}<button class="ghost" id="bk">← Go back</button></div><div id="out"></div>
  <h3 style="margin:26px 0 4px">${CFG.stt?'Transcript':'Your answers'}</h3>${CFG.stt?'<p class="sub" style="font-size:14px">Made by the computer. It may have mistakes. Your teacher will listen to your recording.</p>':''}<div class="trs">${rows}</div></div>`;
@@ -279,7 +340,7 @@ function finish(){
  };
  if($('#st2')) $('#st2').onclick=()=>{
   const L=[`Speaking Practice - Transcript${CFG.name?' - '+CFG.name:''}`,`Student: ${student.first} ${student.last}${student.period?'   Period: '+student.period:''}`,`Date: ${d.toLocaleString()}`,`Automatic transcript - it may contain mistakes. Listen to the recording to grade.`,''];
-  for(const s of TASKS){ const x=said(s); L.push('='.repeat(60), label(s).toUpperCase()+(s.t?`  [${s.t.id}, WIDA ${s.t.level}, ${s.t.area}]`:'')+(recs[s.key]?`  (${Math.round(recs[s.key].duration)} sec)`:''), 'Prompt: '+prompt(s), ...(s.t?['Key words: '+s.t.terms.join(', ')]:[]), '', 'Student: '+(x===null?'[No answer]':x===undefined?'[Transcript not available. '+why(s)+']':x||'[No words heard. '+why(s)+']'), ''); }
+  for(const s of TASKS){ const x=said(s); L.push('='.repeat(60), label(s).toUpperCase()+(s.t?`  [${s.t.id}, WIDA ${s.t.level}, ${s.t.area}]`:'')+(recs[s.key]?`  (${Math.round(recs[s.key].duration)} sec)`:''), 'Prompt: '+prompt(s), ...(s.t?['Key words: '+s.t.terms.join(', ')]:[]), ...(est(s)?(()=>{const a=analyze(s.t,recs[s.key].text);return ['Practice estimate (automatic, not a WIDA score): '+a.label,'Key words used: '+(a.used.join(', ')||'none'),'Words: '+a.words+' (model: '+a.modelN+')'];})():[]), '', 'Student: '+(x===null?'[No answer]':x===undefined?'[Transcript not available. '+why(s)+']':x||'[No words heard. '+why(s)+']'), ''); }
   give(new Blob([L.join('\r\n')],{type:'text/plain'}), base+'_transcript.txt', 'transcript');
  };
 }

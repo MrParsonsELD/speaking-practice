@@ -69,6 +69,7 @@
     <label class="tog"><input type="checkbox" id="c" checked> Show the spoken text on screen</label>
     <label class="tog"><input type="checkbox" id="r" checked> Students can re-record an answer</label>
     <label class="tog"><input type="checkbox" id="x" checked> Make a transcript (Chrome sends the audio to Google to do this)</label>
+    <label class="tog"><input type="checkbox" id="f" checked> Show practice feedback after each answer (needs the transcript)</label>
    </div>
    <h3>Student link</h3>
    <div class="linkbox"><input id="link" readonly aria-label="Student link"><button class="primary" id="copy">Copy</button></div>
@@ -89,7 +90,7 @@ const $=s=>document.querySelector(s);
 const store={get(){try{return JSON.parse(localStorage.getItem('sp-teacher')||'{}')}catch(e){return{}}},set(v){try{localStorage.setItem('sp-teacher',JSON.stringify(v))}catch(e){}}};
 const saved=store.get();
 let level=saved.level||'1-2', area=null, picked=(saved.picked||[]).filter(id=>BYID[id]);
-['nm','tm','w','c','r','x'].forEach(k=>{ if(saved[k]!==undefined){ const el=$('#'+k); if(el.type==='checkbox') el.checked=saved[k]; else el.value=saved[k]; } });
+['nm','tm','w','c','r','x','f'].forEach(k=>{ if(saved[k]!==undefined){ const el=$('#'+k); if(el.type==='checkbox') el.checked=saved[k]; else el.value=saved[k]; } });
 
 function drawFilters(){
  document.querySelectorAll('#lv button').forEach(b=>b.classList.toggle('on',b.dataset.v===level));
@@ -109,7 +110,7 @@ function drawLink(){
  const p=new URLSearchParams();
  if(picked.length) p.set('t',picked.join(','));
  const tm=$('#tm').value; if(tm!=='0') p.set('tm',tm);
- for(const k of ['w','c','r','x']) if(!$('#'+k).checked) p.set(k,'0');
+ for(const k of ['w','c','r','x','f']) if(!$('#'+k).checked) p.set(k,'0');
  const nm=$('#nm').value.trim(); if(nm) p.set('n',nm);
  const base=location.href.replace(/[?#].*$/,'').replace(/[^/]*$/,'')+'index.html';
  const url=base+'?'+p.toString().replace(/%2C/g,',');
@@ -117,7 +118,7 @@ function drawLink(){
  $('#open').href=picked.length?url:'index.html';
  $('#copy').disabled=!picked.length;
  $('#lnote').innerHTML=location.protocol==='file:'?'This page is open from your computer, so this link only works on this computer. Put the files on GitHub Pages to get a link students can use.':'Paste this link into a Canvas assignment. Students open it in Chrome.';
- store.set({level,picked,nm:$('#nm').value,tm:$('#tm').value,w:$('#w').checked,c:$('#c').checked,r:$('#r').checked,x:$('#x').checked});
+ store.set({level,picked,nm:$('#nm').value,tm:$('#tm').value,w:$('#w').checked,c:$('#c').checked,r:$('#r').checked,x:$('#x').checked,f:$('#f').checked});
 }
 function toggle(id){ const i=picked.indexOf(id); if(i>=0) picked.splice(i,1); else { if(picked.length>=12){ alertBox('You can choose up to 12 tasks.'); return; } picked.push(id); } drawList(); drawPicked(); }
 function alertBox(msg){ $('#lnote').textContent=msg; }
@@ -166,7 +167,7 @@ document.addEventListener('click',e=>{
  else if(b.dataset.rm){ picked.splice(+b.dataset.rm,1); drawList(); drawPicked(); }
 });
 $('#q').oninput=drawList;
-['nm','tm','w','c','r','x'].forEach(k=>$('#'+k).addEventListener('input',drawLink));
+['nm','tm','w','c','r','x','f'].forEach(k=>$('#'+k).addEventListener('input',drawLink));
 $('#copy').onclick=async()=>{ const v=$('#link').value; try{ await navigator.clipboard.writeText(v); $('#copy').textContent='Copied!'; }catch(e){ $('#link').select(); document.execCommand('copy'); $('#copy').textContent='Copied!'; } setTimeout(()=>$('#copy').textContent='Copy',1500); };
 $('#clear').onclick=()=>{ picked=[]; drawList(); drawPicked(); };
 drawFilters(); drawList(); drawPicked();
