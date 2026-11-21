@@ -13,6 +13,7 @@
 <main class="wrap" id="app"><p class="sub">Loading…</p></main>
 <script src="tasks.js"></script>
 <script src="pics.js"></script>
+<script src="pron.js"></script>
 <script>
 {
 const BANK = window.BANK;
@@ -30,7 +31,7 @@ const flag = (k,d) => q.has(k) ? q.get(k)!=='0' : d;
 const CFG = {
  ids: (q.get('t')||'').split(',').map(s=>s.trim()).filter(id=>BYID[id]).slice(0,12),
  time: parseInt(q.get('tm')||'0',10)||0,
- words: flag('w',true), retry: flag('r',true), caps: flag('c',true), stt: flag('x',true), fb: flag('f',true),
+ words: flag('w',true), retry: flag('r',true), caps: flag('c',true), stt: flag('x',true), fb: flag('f',true), pron: flag('p',true),
  name: (q.get('n')||'').slice(0,80)
 };
 if(CFG.name) { document.getElementById('ttl').textContent = 'Speaking Practice · ' + CFG.name; document.title = CFG.name; }
@@ -238,7 +239,9 @@ function task(s){
  const lines=isMic?[MIC]:[{id:t.id+'_i',who:'guide',text:t.intro},{id:t.id+'_a',who:'guide',text:t.ask},{id:t.id+'_m',who:t.who,text:t.model},{id:t.id+'_y',who:'guide',text:t.you}];
  const head=isMic?`<b>Microphone check</b><span>Not graded</span>`:`<b>Question ${s.n} of ${TASKS.length-1} · ${esc(t.title)}</b><span>${esc(t.area)}</span>`;
  const pic=isMic?PICS.mic():renderVis(t.vis);
- const terms=(!isMic&&CFG.words)?`<div class="keyterms"><h4>Key words to use</h4><div class="words">${t.terms.map(w=>`<span>${esc(w)}</span>`).join('')}</div></div>`:'';
+ const pr=!isMic&&CFG.words&&CFG.pron&&window.Pron&&BANK.pron;
+ const plist=pr?Pron.itemsFor(t.terms):[];
+ const terms=(!isMic&&CFG.words)?`<div class="keyterms"><h4>Key words to use${plist.length?' · tap a word to hear it':''}</h4><div class="words">${t.terms.map(w=>plist.length&&Pron.itemsFor([w]).length?`<button class="kwb" data-term="${esc(w)}">🔊 ${esc(w)}</button>`:`<span>${esc(w)}</span>`).join('')}</div>${plist.length?'<div class="tools"><button class="ghost" id="kwp">🗣️ Practice saying the key words</button></div>':''}</div>`:'';
  const micbox=isMic?`<div class="micbox"><ol class="steps"><li>Click <b>Test my microphone</b>.</li><li>Chrome asks to use the microphone. Click <b>Allow</b>.</li><li>Choose your headset. No headset? Choose <b>Microphone Array</b>.</li><li>Talk. The green bar moves? Good! Press <b>Start</b>.</li></ol><label>Microphone<select id="micsel"><option value="">Click "Test my microphone"</option></select></label><div class="dock" style="margin-top:4px"><button class="ghost" id="mtest">🎤 Test my microphone</button><div><div class="sub" style="margin:0;font-size:14px">Talk. Does the green bar move?</div><div class="meter wide"><b id="mlv"></b></div></div></div><div id="mmsg"></div>${CFG.stt&&STT?`<div class="dock" style="margin-top:4px"><button class="ghost" id="ttest">📝 Test the transcript</button></div><div id="tmsg"></div>`:''}</div>`:'';
  const capBtn=(CFG.caps||isMic)?`<button class="ghost" id="cap">${captions||isMic?'Hide text':'Show text'}</button>`:'';
  const capOn=isMic||captions;
@@ -252,6 +255,12 @@ function task(s){
  $('#replay').onclick=()=>{ if(rec) return; listen(); };
  if($('#cap')) $('#cap').onclick=()=>{ const on=$('#side').classList.toggle('nocap'); if(!isMic) captions=!on; $('#cap').textContent=on?'Show text':'Hide text'; };
  const dock=$('#dock');
+ if(plist.length){
+  const hooks={ say:(sec,lv)=>{ stopAudio(); return startRec(sec,()=>{},lv).then(r=>{ rec=null; return r; }); }, match:(w,text)=>{ const tw=toks(text); return toks(w).every(x=>tw.some(y=>wordMatch(x,y))); } };
+  const openAt=w=>{ stopAudio(); stopMine(); const first=Pron.itemsFor([w])[0]; Pron.open(plist, Math.max(0,plist.indexOf(first)), hooks); };
+  app.querySelectorAll('.kwb').forEach(b=>b.onclick=()=>openAt(b.dataset.term));
+  $('#kwp').onclick=()=>{ stopAudio(); stopMine(); Pron.open(plist,0,hooks); };
+ }
  if(isMic){
   const sel=$('#micsel'), mmsg=$('#mmsg'), btn=$('#mtest'); let checkT=null;
   const fill=async()=>{ const ms=await listMics(); const cur=stream&&stream.getAudioTracks()[0]; const curId=cur&&cur.getSettings?cur.getSettings().deviceId:''; sel.innerHTML=ms.map((d,i)=>`<option value="${esc(d.deviceId)}" ${d.deviceId===(micId||curId)?'selected':''}>${esc(d.label||('Microphone '+(i+1)))}</option>`).join('')||'<option value="">No microphone found</option>'; };
